@@ -1,0 +1,6 @@
+# pnpm 10 keeps dependency build-script decisions here rather than in package.json.
+# esbuild (Vite) and sharp both need their install scripts to run; everything else
+# stays blocked by default.
+onlyBuiltDependencies:
+  - esbuild
+  - sharp

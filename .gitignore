@@ -1,0 +1,25 @@
+# Local Netlify folder
+.netlify
+
+# Dependencies
+node_modules
+
+# Build output
+dist
+.output
+
+# Logs and OS noise
+*.log
+.DS_Store
+
+# Secrets and local configuration
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.crt
+*.p12
+*.jks
+secrets/
+credentials/

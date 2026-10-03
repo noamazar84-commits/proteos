@@ -1,0 +1,123 @@
+diff --git a/src/lib/server/whop.ts b/src/lib/server/whop.ts
+--- a/src/lib/server/whop.ts
++++ b/src/lib/server/whop.ts
+@@ -17,6 +17,7 @@
+   paymentDate: Date | null
+   email: string | null
+   membershipId: string | null
++  planId: string | null
+   kind: WhopEventKind
+   trialStartedAt: Date | null
+   trialEndsAt: Date | null
+@@ -92,6 +93,10 @@
+   const membershipUser = objectAt(membership, 'user')
+   const payment = objectAt(data, 'payment')
+   const customer = objectAt(data, 'customer')
++  const dataPlan = objectAt(data, 'plan')
++  const membershipPlan = objectAt(membership, 'plan')
++  const paymentPlan = objectAt(payment, 'plan')
++  const paymentMembershipPlan = objectAt(objectAt(payment, 'membership'), 'plan')
+   const eventType = firstString(payload.type, payload.event_type, payload.event)
+   if (!eventType) return null
+ 
+@@ -115,6 +120,14 @@
+     objectAt(payment, 'membership').id,
+     eventType.startsWith('membership.') ? data.id : null,
+   )
++  // v1 membership events carry a plan object directly; payment events can carry it
++  // on the payment or its linked membership. Keep the ID for server-side allowlisting.
++  const planId = firstString(
++    data.plan_id, data.planId, dataPlan.id,
++    membership.plan_id, membership.planId, membershipPlan.id,
++    payment.plan_id, payment.planId, paymentPlan.id,
++    objectAt(payment, 'membership').plan_id, paymentMembershipPlan.id,
++  )
+   const eventAt = firstDate(payload.created_at, payload.timestamp, data.created_at, data.updated_at) ?? new Date(Number(timestamp) * 1000)
+   const paymentDate = firstDate(data.paid_at, payment.paid_at, data.succeeded_at, payment.succeeded_at)
+   const rawStatus = firstString(data.status, membership.status)?.toLowerCase() ?? ''
+@@ -200,6 +213,7 @@
+     paymentDate,
+     email: emailIsValid,
+     membershipId,
++    planId,
+     kind,
+     trialStartedAt,
+     trialEndsAt,
+diff --git a/src/routes/api.webhooks.payment.ts b/src/routes/api.webhooks.payment.ts
+--- a/src/routes/api.webhooks.payment.ts
++++ b/src/routes/api.webhooks.payment.ts
+@@ -8,6 +8,13 @@
+   if (!error || typeof error !== 'object') return false
+   const candidate = error as { code?: unknown; errno?: unknown }
+   return candidate.code === 'ER_DUP_ENTRY' || candidate.errno === 1062
++}
++
++class UnmatchedCustomerError extends Error {
++  constructor(readonly webhookId: string) {
++    super('Signed Whop event does not match a Proteus customer.')
++    this.name = 'UnmatchedCustomerError'
++  }
+ }
+ 
+ export const Route = createFileRoute('/api/webhooks/payment')({
+@@ -30,6 +37,20 @@
+         const event = normalizeWhopEvent(payload, webhookId, timestamp)
+         if (!event) return new Response('Invalid event payload', { status: 400 })
+ 
++        if (event.kind !== 'ignored') {
++          const expectedPlanId = process.env.WHOP_PLAN_ID?.trim()
++          if (!expectedPlanId || !/^plan_[A-Za-z0-9]+$/.test(expectedPlanId)) {
++            return new Response('Whop plan configuration is unavailable', { status: 503 })
++          }
++          if (!event.planId) {
++            console.warn(`Whop event ${event.id} has no plan ID; rejecting it for retry.`)
++            return new Response('Whop event is missing plan identity', { status: 503 })
++          }
++          // A valid signature authenticates the sender, not the product. Persist and
++          // acknowledge other-plan events as ignored; never let them change Proteus access.
++          if (event.planId !== expectedPlanId) event.kind = 'ignored'
++        }
++
+         const db = getDb()
+         try {
+           await db.transaction(async (tx) => {
+@@ -49,7 +70,7 @@
+               const [match] = await tx.select().from(customers).where(eq(customers.email, event.email)).limit(1)
+               customer = match ?? null
+             }
+-            if (!customer) return
++            if (!customer) throw new UnmatchedCustomerError(event.id)
+             if (customer.providerEventAt && customer.providerEventAt.getTime() > event.eventAt.getTime()) return
+ 
+             const patch: Partial<typeof customers.$inferInsert> = { providerEventAt: event.eventAt }
+@@ -103,7 +124,29 @@
+           })
+           return Response.json({ received: true }, { headers: { 'cache-control': 'no-store' } })
+         } catch (error) {
+-          if (duplicateKey(error)) return Response.json({ received: true, duplicate: true }, { headers: { 'cache-control': 'no-store' } })
++          if (error instanceof UnmatchedCustomerError) {
++            // Throwing inside the transaction rolls back the idempotency insert too,
++            // so a later Whop retry can be processed after the customer is linked.
++            console.warn(`Whop event ${error.webhookId} has no matching customer; returning a retryable response.`)
++            return Response.json({ error: 'Customer record is not available yet.' }, { status: 503 })
++          }
++          if (duplicateKey(error)) {
++            // A duplicate on another unique key (for example, a concurrent membership
++            // link) is not the same as a duplicate webhook delivery. Only acknowledge
++            // when this exact webhook ID is already committed to the idempotency table.
++            try {
++              const [priorEvent] = await getDb()
++                .select({ webhookId: whopWebhookEvents.webhookId })
++                .from(whopWebhookEvents)
++                .where(eq(whopWebhookEvents.webhookId, event.id))
++                .limit(1)
++              if (priorEvent) {
++                return Response.json({ received: true, duplicate: true }, { headers: { 'cache-control': 'no-store' } })
++              }
++            } catch {
++              // Fall through to the retryable 500 below if the ledger check fails.
++            }
++          }
+           console.error('Whop webhook processing failed; provider may retry.')
+           return Response.json({ error: 'Webhook could not be processed.' }, { status: 500 })
+         }
