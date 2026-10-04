@@ -1,0 +1,21 @@
+{
+  "routes": [
+    { "path": "/", "title": "Proteus - protein-first weight loss" },
+    { "path": "/app", "title": "Choose your pathway" },
+    { "path": "/app?pathway=glp1", "title": "GLP-1 Users pathway setup" },
+    { "path": "/app?pathway=bariatric", "title": "Bariatric / Sleeve pathway setup" },
+    { "path": "/app?pathway=general", "title": "General Weight Loss pathway setup" },
+    { "path": "/app/plan", "title": "30-day plan dashboard" },
+    { "path": "/app/protein", "title": "Protein target and meal builder" },
+    { "path": "/app/fitness", "title": "Fitness and movement" },
+    { "path": "/app/meal-scanner", "title": "AI meal scanner" },
+    { "path": "/app/check-in", "title": "Monthly check-in" },
+    { "path": "/app/support", "title": "AI wellness support" },
+    { "path": "/app/settings", "title": "Account settings, privacy, cancellation, and deletion" },
+    { "path": "/admin", "title": "Admin CRM" },
+    { "path": "/privacy", "title": "Privacy Policy" },
+    { "path": "/terms", "title": "Terms of Use" },
+    { "path": "/refund", "title": "Refund Policy" },
+    { "path": "/support", "title": "Support, FAQ and Contact" }
+  ]
+}
